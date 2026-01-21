@@ -39,7 +39,7 @@ The demo application is a simple Node.js web server that demonstrates basic cont
 
 **Application Structure:**
 ```
-demo-1-gettting-started/src/
+01-demo-app/src/
 ├── app.mjs             # Main application file
 ├── helpers.mjs         # supporting application file
 ├── package.json        # Node.js dependencies
@@ -52,17 +52,19 @@ This lightweight application is perfect for learning Docker basics without getti
 
 ### Step 1: Create the Application Files
 
-**1.1 Create `demo-1-gettting-started/src/app.mjs`**
-**1.2 Create `demo-1-gettting-started/src/helpers.mjs`**
-**1.2 Create `demo-1-gettting-started/src/package.json`:**
+**1.1 Create `01-demo-app/src/app.mjs`**
+
+**1.2 Create `01-demo-app/src/helpers.mjs`**
+
+**1.3 Create `01-demo-app/src/package.json`:**
 
 ### Step 2: Create the Dockerfile
 
-Create a file named `Dockerfile` (no extension) in `demo-1-gettting-started/src` directory:
+Create a file named `Dockerfile` (no extension) in `01-demo-app/src` directory:
 
 ```dockerfile
 # Use Node.js base image
-FROM node:14
+FROM node:25
 
 # Set working directory inside container
 WORKDIR /app
@@ -80,12 +82,12 @@ COPY . .
 EXPOSE 3000
 
 # Start the application
-CMD ["npm", "start"]
+CMD [ "node", "app.mjs"]
 ```
 
 ### Step 3: Build the Docker Image
 
-Open your terminal in the `demo-1-gettting-started/src` directory and run:
+Open your terminal in the `01-demo-app/src` directory and run:
 
 ```bash
 docker build -t my-node-app .
@@ -158,6 +160,54 @@ docker rm my-container
 
 This permanently removes the stopped container.
 
+
+## Key Concepts Explained
+
+### 1. **Optimizing Docker Builds with Layer Caching**
+
+Docker builds images in layers, where each instruction in your Dockerfile creates a new layer. Layers are cached and reused if the contents haven’t changed, which can dramatically speed up rebuilds.
+
+How it works
+
+1. **Copy `package.json` first**
+```
+COPY package.json .
+```
+
+- Copies only package.json (and package-lock.json if present).
+
+- If your application code changes later, this layer does not change, keeping the cache valid.
+
+2. **Install dependencies**
+```
+RUN npm install
+```
+
+- Installs dependencies based on package.json.
+
+- This layer is cached unless package.json changes.
+
+3. **Copy the rest of the source code**
+```
+COPY . .
+```
+
+- Copies all remaining files (your app code, static assets, etc.).
+
+- If only your source code changes, Docker reuses the cached npm install layer, avoiding unnecessary reinstalling of dependencies.
+
+✅ Result: much faster rebuilds.
+
+### What happens if you copy everything first
+```
+COPY . .
+RUN npm install
+```
+
+- Every time any file changes (even server.js or styles.css), Docker invalidates the cache for npm install.
+
+- This causes all dependencies to be reinstalled on each build, making rebuilds slower, especially for projects with large node_modules.
+
 ## Troubleshooting
 
 **Port already in use:**
@@ -172,6 +222,7 @@ docker run -d -p 8080:3000 --name my-container my-node-app
 In this lab, you:
 - ✅ Created a Dockerfile to define container configuration
 - ✅ Built a Docker image containing your application and dependencies
+- ✅ Built a Docker image using **Optimized Layer Caching**
 - ✅ Ran a container and exposed ports for external access
 - ✅ Managed container lifecycle (start, stop, remove)
 - ✅ Understood the basic Docker development workflow

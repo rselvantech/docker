@@ -11,13 +11,13 @@ app.use(
   })
 );
 
-app.use(express.static('public'));
+app.use(express.static('styles'));
 
 app.get('/', (req, res) => {
   res.send(`
     <html>
       <head>
-        <link rel="stylesheet" href="styles.css">
+        <link rel="stylesheet" href="/styles.css">
       </head>
       <body>
         <section>
