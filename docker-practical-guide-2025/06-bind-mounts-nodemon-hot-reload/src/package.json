@@ -1,0 +1,15 @@
+{
+  "name": "feedback-app",
+  "version": "1.0.0",
+  "description": "Feedback storage application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.17.1",
+    "body-parser": "^1.19.0",
+    "nodemon": "^2.0.20"
+  }
+}
