@@ -1,8 +1,12 @@
-# Docker Container Networking Lab
+# Docker Container Networking Lab - Communicate with External APIs
 
 ## Lab Overview
 
-This hands-on lab introduces Docker container networking by exploring three essential communication patterns. You'll learn how containers communicate with the outside world, the host machine, and other containers, while troubleshooting real-world networking challenges with MongoDB and external APIs.
+This hands-on lab introduces Docker container networking by exploring three essential communication patterns. 
+You'll learn how containers communicate with the 
+case-1 : outside world (This Demo) 
+Case-2 : the host machine
+case-2 : and other containers, while troubleshooting real-world networking challenges with MongoDB and external APIs.
 
 **What you'll do:**
 - Understand Docker's isolated network architecture
@@ -17,7 +21,6 @@ This hands-on lab introduces Docker container networking by exploring three esse
 **Required Software:**
 - Docker client and daemon installed and running
 - Text editor or IDE
-- MongoDB installed and running on host machine (for later steps)
 - Terminal with curl or HTTP client
 
 **Knowledge Requirements:**
@@ -47,6 +50,7 @@ A Node.js/Express REST API that manages favorite Star Wars movies and characters
 **Application Structure:**
 ```
 09-network-case1-external-apis/
+├── README.md                       # This file
 └── src/
     ├── app.js                 # Main Express application
     ├── package.json           # Dependencies (express, mongoose, axios)
