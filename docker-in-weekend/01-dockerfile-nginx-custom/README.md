@@ -54,7 +54,7 @@ The demo creates a customized Nginx web server with your own HTML content:
 
 **Application Structure:**
 ```
-03-dockerfile-nginx-custom/
+01-dockerfile-nginx-custom/
 └── src/
     ├── Dockerfile          # Image build instructions
     └── index.html          # Custom HTML content
@@ -138,8 +138,8 @@ Login Succeeded
 ### Step 3: Create Project Structure
 
 ```bash
-mkdir -p 03-dockerfile-nginx-custom/src
-cd 03-dockerfile-nginx-custom/src
+mkdir -p 01-dockerfile-nginx-custom/src
+cd 01-dockerfile-nginx-custom/src
 ```
 
 ### Step 4: Create Application Files

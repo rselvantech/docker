@@ -780,6 +780,754 @@ docker volume rm data logs
 docker rmi goals-react goals-node mongo
 ```
 
+---
+
+## Deep Dive: Volume Types and Their Purposes
+
+### Understanding the Three Volume Types in This Application
+
+Docker provides three distinct volume types, and this application uses all three strategically. Understanding when and why to use each type is crucial for building production-ready containerized applications.
+
+### 1. Named Volumes - MongoDB Data Persistence
+
+**Used in:** MongoDB container
+```bash
+-v data:/data/db
+```
+
+**Characteristics:**
+- **Managed by Docker:** Stored in Docker's internal storage area (`/var/lib/docker/volumes/` on Linux)
+- **Named reference:** `data` is a user-friendly name, not a path
+- **Persistent:** Survives container removal and recreation
+- **Portable:** Can be backed up, migrated, and shared across containers
+- **No host path dependency:** Works consistently across different host systems
+
+**Why we use it for MongoDB:**
+```
+Problem: MongoDB stores database files in /data/db inside container
+Without volume: Data lost when container removed
+With named volume: Data persists independently of container lifecycle
+
+Workflow:
+1. Container writes data to /data/db
+2. Docker maps this to named volume "data"
+3. Data stored on host in Docker-managed location
+4. Container removed → data remains in volume
+5. New container started with same volume → data restored
+```
+
+**Real-world example:**
+```bash
+# Day 1: Create database with data
+docker run -v data:/data/db mongo
+# User adds goals → data saved to "data" volume
+
+# Day 2: Update MongoDB version
+docker stop mongodb && docker rm mongodb
+docker run -v data:/data/db mongo:7.1  # New version, same volume
+# All goals still present!
+```
+
+**When to use named volumes:**
+- Database data (PostgreSQL, MySQL, MongoDB)
+- Application state that must persist
+- Data you want Docker to manage
+- Data that doesn't need direct host access
+
+### 2. Bind Mounts - Live Source Code Updates
+
+**Used in:** Backend and Frontend containers
+```bash
+# Backend
+-v $(pwd)/backend:/app
+
+# Frontend  
+-v $(pwd)/frontend/src:/app/src
+```
+
+**Characteristics:**
+- **Host path specified:** Full absolute or relative path to host directory
+- **Two-way sync:** Changes on host reflect in container, and vice versa
+- **Development-focused:** Primarily for local development workflows
+- **Direct access:** Files visible and editable on host filesystem
+- **Performance considerations:** Can be slower on Mac/Windows (virtualization layer)
+
+**Why we use it for source code:**
+```
+Problem: Need to edit code on host and see changes in container immediately
+Solution: Bind mount maps host source directory to container working directory
+
+Development workflow:
+1. Developer edits backend/app.js on host machine
+2. File change detected on host filesystem
+3. Bind mount ensures container sees same file change
+4. Nodemon in container detects file change
+5. Nodemon automatically restarts Node.js server
+6. New code running in container instantly
+```
+
+**Backend bind mount breakdown:**
+```bash
+-v $(pwd)/backend:/app
+
+# What this means:
+# Host location: /home/user/project/backend/
+#   ├── app.js
+#   ├── package.json
+#   ├── models/
+#   └── logs/
+#
+# Container location: /app/
+#   ├── app.js          ← Same as host (bind mount)
+#   ├── package.json    ← Same as host (bind mount)
+#   ├── models/         ← Same as host (bind mount)
+#   ├── logs/           ← DIFFERENT (named volume overrides)
+#   └── node_modules/   ← DIFFERENT (anonymous volume overrides)
+```
+
+**Frontend bind mount breakdown:**
+```bash
+-v $(pwd)/frontend/src:/app/src
+
+# Only binds src/ folder, not entire project
+# Why? React's build process needs consistent node_modules
+# Result: Change any .js/.jsx/.css in src/ → instant hot reload
+```
+
+**When to use bind mounts:**
+- Source code during development
+- Configuration files you frequently edit
+- Log files you want to view on host
+- Sharing files between host and container
+- When you need exact host-to-container file sync
+
+**⚠️ Production Warning:**
+```bash
+# ❌ NEVER in production:
+-v $(pwd)/backend:/app
+
+# ✅ Production approach:
+# Bake code into image with COPY instruction
+# No bind mounts - code is immutable in image
+```
+
+### 3. Anonymous Volumes - Protecting Container Data
+
+**Used in:** Backend container
+```bash
+-v /app/node_modules
+```
+
+**Characteristics:**
+- **No name specified:** Docker assigns random ID as name
+- **One-time use:** Typically removed with container (unless explicitly preserved)
+- **Path-only syntax:** Just the container path, no host path
+- **Highest precedence:** Overrides bind mounts for specific paths
+- **Container-scoped:** Data stays with container lifecycle
+
+**Why we use it for node_modules:**
+```
+Problem: Bind mount would overwrite container's node_modules with host's
+Host: Might not have node_modules, or has wrong platform binaries
+Container: Has correctly built node_modules from npm install
+
+Without anonymous volume:
+1. docker build → npm install creates node_modules in container
+2. docker run with bind mount → host directory overwrites container
+3. Host has no node_modules → container's node_modules erased
+4. Application crashes: "Cannot find module 'express'"
+
+With anonymous volume:
+1. docker build → npm install creates node_modules
+2. docker run with -v /app/node_modules → protects this path
+3. Bind mount overwrites /app BUT NOT /app/node_modules
+4. Container keeps its working node_modules
+5. Application runs successfully
+```
+
+**Volume precedence in action:**
+```bash
+docker run \
+  -v $(pwd)/backend:/app \        # Bind mount (precedence: 1 - lowest)
+  -v logs:/app/logs \              # Named volume (precedence: 2)
+  -v /app/node_modules \           # Anonymous volume (precedence: 3 - highest)
+  goals-node
+
+# Result:
+# /app              ← From host (bind mount)
+# /app/logs         ← From "logs" named volume (overrides bind mount)
+# /app/node_modules ← From container (overrides bind mount)
+```
+
+**Visual representation:**
+```
+Container filesystem:
+/app/
+├── app.js                  [BIND MOUNT from host]
+├── package.json            [BIND MOUNT from host]
+├── models/                 [BIND MOUNT from host]
+│   └── goal.js            [BIND MOUNT from host]
+├── node_modules/           [ANONYMOUS VOLUME - protected from bind mount]
+│   ├── express/           [Stays from container]
+│   ├── mongoose/          [Stays from container]
+│   └── ...                [Stays from container]
+└── logs/                   [NAMED VOLUME - protected from bind mount]
+    └── access.log          [Persists across container restarts]
+```
+
+**When to use anonymous volumes:**
+- Protecting specific folders from being overwritten by bind mounts
+- Temporary container-specific data
+- Cache directories that should stay in container
+- Platform-specific binaries (like node_modules)
+
+### Volume Strategy Summary
+
+| Volume Type | Use Case | Persistence | Performance | Development | Production |
+|-------------|----------|-------------|-------------|-------------|------------|
+| **Named** | Database data, logs | ✅ High | ✅ Fast | ✅ Yes | ✅ Yes |
+| **Bind Mount** | Source code sync | ⚠️ Host-dependent | ⚠️ Variable | ✅ Yes | ❌ No |
+| **Anonymous** | Protect folders | ❌ Ephemeral | ✅ Fast | ✅ Yes | ⚠️ Rare |
+
+### Complete Volume Configuration Example
+
+**Backend container:**
+```bash
+docker run \
+  -v logs:/app/logs \              # Named: Log persistence
+  -v $(pwd)/backend:/app \         # Bind: Live code updates
+  -v /app/node_modules \           # Anonymous: Protect dependencies
+  goals-node
+
+# This configuration enables:
+# 1. Edit code on host → instantly reflected in container
+# 2. Logs persist even if container destroyed
+# 3. Dependencies stay working regardless of host state
+```
+
+**Why this specific combination?**
+```
+Requirement 1: "I want to edit code and see changes immediately"
+→ Solution: Bind mount source code
+
+Requirement 2: "I don't want to lose log files when container restarts"
+→ Solution: Named volume for logs directory
+
+Requirement 3: "My host doesn't have node_modules, but container needs them"
+→ Solution: Anonymous volume to protect node_modules
+
+Result: All three requirements met simultaneously!
+```
+
+---
+
+## Deep Dive: Docker Networks and DNS Resolution
+
+### How Container-to-Container Communication Works
+
+Docker networking is fundamental to multi-container applications. This section explains how containers discover and communicate with each other.
+
+### Default Network Behavior
+
+**Without custom network:**
+```bash
+# Container 1
+docker run --name mongodb mongo
+
+# Container 2  
+docker run --name backend goals-node
+```
+
+**Problem:**
+- Containers CAN'T communicate using names
+- Must use IP addresses (but IPs change!)
+- No automatic DNS resolution
+- Manual linking required (deprecated `--link` flag)
+
+**Why this fails:**
+```javascript
+// In backend container
+mongoose.connect('mongodb://mongodb:27017/db')
+// ❌ Error: getaddrinfo ENOTFOUND mongodb
+
+// Container can't resolve "mongodb" hostname
+// Default bridge network doesn't provide DNS
+```
+
+### Custom Network Solution
+
+**With custom network:**
+```bash
+# Step 1: Create network
+docker network create goals-net
+
+# Step 2: Run containers on network
+docker run --name mongodb --network goals-net mongo
+docker run --name backend --network goals-net goals-node
+```
+
+**Benefits:**
+- ✅ Automatic DNS resolution
+- ✅ Use container names as hostnames
+- ✅ Isolated network segment
+- ✅ Simplified service discovery
+
+**Why this works:**
+```javascript
+// In backend container
+mongoose.connect('mongodb://mongodb:27017/db')
+// ✅ Success!
+
+// Docker's embedded DNS server:
+// 1. Backend queries "mongodb"
+// 2. DNS server checks goals-net network
+// 3. Finds container named "mongodb"
+// 4. Returns its IP address (e.g., 172.18.0.2)
+// 5. Connection established
+```
+
+### Docker's Embedded DNS Server
+
+Every custom network has a built-in DNS server at `127.0.0.11`.
+
+**How it works:**
+```
+┌────────────────────────────────────────────────────────┐
+│         Docker Network: goals-net                      │
+│         DNS Server: 127.0.0.11                         │
+│                                                        │
+│  Container: mongodb                                    │
+│  IP: 172.18.0.2                                        │
+│  DNS Record: mongodb → 172.18.0.2                      │
+│                                                        │
+│  Container: goals-backend                              │
+│  IP: 172.18.0.3                                        │
+│  DNS Record: goals-backend → 172.18.0.3                │
+└────────────────────────────────────────────────────────┘
+
+Query flow:
+1. goals-backend runs: mongoose.connect('mongodb://mongodb:27017/...')
+2. Container DNS: "What's the IP of 'mongodb'?"
+3. DNS Server (127.0.0.11) responds: "172.18.0.2"
+4. Connection made to 172.18.0.2:27017
+```
+
+**Verify DNS resolution:**
+```bash
+# From backend container, resolve mongodb
+docker exec goals-backend getent hosts mongodb
+# Output: 172.18.0.2      mongodb
+
+# From mongodb container, resolve backend
+docker exec mongodb getent hosts goals-backend  
+# Output: 172.18.0.3      goals-backend
+
+# Check DNS server in container
+docker exec goals-backend cat /etc/resolv.conf
+# Output: nameserver 127.0.0.11
+```
+
+### Network Isolation and Security
+
+**Containers on same network:**
+```bash
+docker network create app-net
+
+docker run --network app-net --name db mongo
+docker run --network app-net --name api backend
+docker run --network app-net --name web frontend
+
+# These CAN communicate:
+# api → db (allowed)
+# web → api (allowed)
+# web → db (allowed but bad practice)
+```
+
+**Containers on different networks:**
+```bash
+docker network create db-net
+docker network create app-net
+
+docker run --network db-net --name db mongo
+docker run --network app-net --name api backend
+
+# These CAN'T communicate:
+# api → db ❌ (different networks)
+
+# Solution: Connect api to both networks
+docker network connect db-net api
+# Now api can reach db!
+```
+
+**Security benefits:**
+```
+Network: private-db-net
+- MongoDB container
+- No published ports
+- Only backend can access
+
+Network: public-app-net  
+- Backend container
+- Frontend container
+- Published ports for external access
+
+Result:
+- Database completely isolated from outside world
+- Only backend (on both networks) can access database
+- Even if frontend compromised, can't reach database
+```
+
+### Published Ports vs Network Communication
+
+**Understanding the difference:**
+
+**Scenario 1: Backend accessing MongoDB**
+```bash
+# MongoDB - NO published ports
+docker run --name mongodb --network goals-net mongo
+# Port 27017 NOT published to host
+
+# Backend - on same network
+docker run --name backend --network goals-net backend-image
+
+# Backend can connect using container name:
+mongoose.connect('mongodb://mongodb:27017/db')
+# ✅ Works! Uses Docker network, not host ports
+```
+
+**Scenario 2: Browser accessing Backend**
+```bash
+# Backend - port published
+docker run --name backend --network goals-net -p 80:80 backend-image
+# Port 80 published: localhost:80 → container:80
+
+# Frontend React code in browser:
+fetch('http://localhost:80/goals')
+// ✅ Works! Browser uses published port
+
+# Frontend React trying container name:
+fetch('http://goals-backend/goals')  
+// ❌ Fails! Browser not in Docker network
+```
+
+**Key principle:**
+```
+Container-to-Container: Use container names (DNS)
+Host/Browser-to-Container: Use published ports (localhost)
+```
+
+### Network Configuration in Our Application
+
+**Our setup:**
+```bash
+docker network create goals-net
+
+# MongoDB: network only, no published port
+docker run \
+  --name mongodb \
+  --network goals-net \
+  mongo
+
+# Backend: network + published port
+docker run \
+  --name goals-backend \
+  --network goals-net \
+  -p 80:80 \
+  goals-node
+
+# Frontend: published port only (no network needed)
+docker run \
+  --name goals-frontend \
+  -p 3000:3000 \
+  goals-react
+```
+
+**Why frontend doesn't need network:**
+```
+1. React code runs in BROWSER, not in container
+2. Browser is NOT part of Docker network
+3. Browser can only use localhost with published ports
+4. Frontend container only runs dev server
+5. Dev server doesn't communicate with backend
+6. Therefore, frontend container doesn't need goals-net
+```
+
+**Communication paths:**
+```
+Browser → Frontend Container (localhost:3000)
+  Purpose: Load React app assets
+  Method: Published port
+
+Browser → Backend Container (localhost:80)
+  Purpose: API calls from React code
+  Method: Published port
+  
+Backend Container → MongoDB Container (mongodb:27017)
+  Purpose: Database queries
+  Method: Docker network DNS
+```
+
+### Network Inspection and Debugging
+
+**View network details:**
+```bash
+docker network inspect goals-net
+```
+
+**Key information:**
+```json
+{
+  "Name": "goals-net",
+  "Driver": "bridge",
+  "IPAM": {
+    "Config": [{
+      "Subnet": "172.18.0.0/16",
+      "Gateway": "172.18.0.1"
+    }]
+  },
+  "Containers": {
+    "abc123": {
+      "Name": "mongodb",
+      "IPv4Address": "172.18.0.2/16"
+    },
+    "def456": {
+      "Name": "goals-backend", 
+      "IPv4Address": "172.18.0.3/16"
+    }
+  }
+}
+```
+
+**Test connectivity:**
+```bash
+# Can backend ping mongodb?
+docker exec goals-backend ping -c 2 mongodb
+# If ping not available, use:
+docker exec goals-backend getent hosts mongodb
+
+# Can backend make TCP connection?
+docker exec goals-backend curl -v mongodb:27017
+
+# Check network from inside container
+docker exec goals-backend ip addr show
+```
+
+---
+
+## Deep Dive: MongoDB Authentication in Containers
+
+### Understanding MongoDB Authentication Setup
+
+MongoDB in containers supports initialization with authentication, controlled by environment variables. This section explains how authentication works and why it's configured this way.
+
+### Environment Variables and Initialization
+
+**MongoDB container startup:**
+```bash
+docker run \
+  -e MONGO_INITDB_ROOT_USERNAME=rselvantech \
+  -e MONGO_INITDB_ROOT_PASSWORD=passWD \
+  mongo
+```
+
+**What happens during first start:**
+```
+1. Container starts MongoDB process
+2. Checks if /data/db is empty (first run)
+3. Finds MONGO_INITDB_ROOT_USERNAME environment variable
+4. Finds MONGO_INITDB_ROOT_PASSWORD environment variable
+5. Creates admin database
+6. Creates user with these credentials
+7. Enables authentication requirement
+8. Subsequent connections must provide credentials
+```
+
+**After initialization:**
+```
+1. Data in /data/db now contains user credentials
+2. Environment variables no longer needed
+3. But harmless if provided again
+4. User credentials persist in database files
+```
+
+### Connection String Authentication
+
+**Backend connection code:**
+```javascript
+mongoose.connect(
+  `mongodb://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@mongodb:27017/course-goals?authSource=admin`,
+  {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  }
+)
+```
+
+**Breaking down the connection string:**
+```
+mongodb://                     Protocol
+  rselvantech:passWD           Username:Password
+  @mongodb:27017               Container name:Port
+  /course-goals                Database name
+  ?authSource=admin            Authentication database
+
+Full: mongodb://rselvantech:passWD@mongodb:27017/course-goals?authSource=admin
+```
+
+**Why authSource=admin?**
+```
+MongoDB stores user credentials in databases
+Default initialization creates user in "admin" database
+Even when accessing "course-goals" database:
+  - Must authenticate against "admin" database
+  - User credentials checked in admin database
+  - Then granted access to course-goals database
+  
+Without ?authSource=admin:
+  - MongoDB looks for user in "course-goals" database
+  - User doesn't exist there (exists in "admin")
+  - Authentication fails: "MongoError: Authentication failed"
+```
+
+### Environment Variable Flow
+
+**Dockerfile defaults:**
+```dockerfile
+ENV MONGODB_USERNAME=root
+ENV MONGODB_PASSWORD=secret
+```
+
+**Docker run overrides:**
+```bash
+docker run \
+  -e MONGODB_USERNAME=rselvantech \
+  -e MONGODB_PASSWORD=passWD \
+  goals-node
+```
+
+**Runtime value resolution:**
+```javascript
+// In app.js
+process.env.MONGODB_USERNAME  // "rselvantech" (from docker run)
+process.env.MONGODB_PASSWORD  // "passWD" (from docker run)
+
+// Template literal substitution
+`mongodb://${process.env.MONGODB_USERNAME}:${process.env.MONGODB_PASSWORD}@mongodb:27017/course-goals?authSource=admin`
+
+// Results in
+"mongodb://rselvantech:passWD@mongodb:27017/course-goals?authSource=admin"
+```
+
+**Precedence chain:**
+```
+Highest: docker run -e flag
+Medium:  ENV in Dockerfile  
+Lowest:  (no default if not specified)
+
+Example:
+Dockerfile:  ENV MONGODB_USERNAME=root
+Docker run:  -e MONGODB_USERNAME=rselvantech
+Result:      process.env.MONGODB_USERNAME === "rselvantech"
+```
+
+### Security Considerations
+
+**Development (current setup):**
+```bash
+# Credentials in plain text
+-e MONGODB_USERNAME=rselvantech \
+-e MONGODB_PASSWORD=passWD
+
+# Problems:
+# - Visible in docker inspect
+# - Visible in process list
+# - Stored in shell history
+# - Not encrypted
+
+# Acceptable for local development only!
+```
+
+**Production approaches:**
+
+**1. Environment files:**
+```bash
+# .env file (not committed to git)
+MONGODB_USERNAME=rselvantech
+MONGODB_PASSWORD=complexP@ssw0rd!123
+
+# Docker run
+docker run --env-file .env goals-node
+```
+
+**2. Docker secrets (Swarm/Kubernetes):**
+```bash
+# Create secret
+echo "complexP@ssw0rd!123" | docker secret create db_password -
+
+# Use secret in service
+docker service create \
+  --secret db_password \
+  --name backend \
+  goals-node
+
+# Access in application
+const password = fs.readFileSync('/run/secrets/db_password', 'utf8');
+```
+
+**3. External secret management:**
+```
+- HashiCorp Vault
+- AWS Secrets Manager
+- Azure Key Vault
+- Google Secret Manager
+
+Benefits:
+- Centralized secret management
+- Rotation policies
+- Access auditing
+- Encryption at rest and in transit
+```
+
+### Authentication Troubleshooting
+
+**Common error 1: Wrong credentials**
+```
+Error: MongoError: Authentication failed.
+
+Cause: Username or password mismatch
+
+Check:
+docker run -e MONGODB_USERNAME=rselvantech ...  # Must match MongoDB
+docker run -e MONGO_INITDB_ROOT_USERNAME=rselvantech ... # MongoDB initialization
+```
+
+**Common error 2: Missing authSource**
+```
+Error: MongoError: Authentication failed.
+
+Connection string:
+mongodb://rselvantech:passWD@mongodb:27017/course-goals
+
+Fix:
+mongodb://rselvantech:passWD@mongodb:27017/course-goals?authSource=admin
+                                                         ^^^^^^^^^^^^^^^^^
+```
+
+**Common error 3: Credentials in wrong container**
+```
+# MongoDB initialized with credentials
+docker run -e MONGO_INITDB_ROOT_USERNAME=alice ...
+
+# Backend using different credentials  
+docker run -e MONGODB_USERNAME=bob ...
+
+# Result: Authentication failure!
+# Must use same username for both
+```
+
+---
+
+
 ## Understanding Key Concepts
 
 ### Why Frontend Can't Use Container Names

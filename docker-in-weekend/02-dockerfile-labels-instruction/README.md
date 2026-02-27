@@ -37,7 +37,7 @@ Same custom Nginx setup from previous lab, now enhanced with metadata labels:
 
 **Application Structure:**
 ```
-04-dockerfile-labels-instruction/
+02-dockerfile-labels-instruction/
 └── src/
     ├── Dockerfile           # With LABEL instructions
     └── index.html          # Custom HTML content
@@ -131,8 +131,8 @@ The OCI Image Specification defines standard labels for container images. These 
 ### Step 2: Create Project Structure
 
 ```bash
-mkdir -p docker-in-weekend/04-dockerfile-labels-instruction/src
-cd docker-in-weekend/04-dockerfile-labels-instruction/src
+mkdir -p docker-in-weekend/02-dockerfile-labels-instruction/src
+cd docker-in-weekend/02-dockerfile-labels-instruction/src
 ```
 
 ### Step 3: Create Application Files
@@ -205,8 +205,8 @@ LABEL org.opencontainers.image.authors="RSelvan" \
       org.opencontainers.image.revision="1234567890abcdef" \
       org.opencontainers.image.created="2025-01-25T08:30:00Z" \
       org.opencontainers.image.url="https://github.com/stacksimplify/docker-in-a-weekend" \
-      org.opencontainers.image.source="https://github.com/docker/blob/main/docker-in-weekend/04-dockerfile-labels-instruction/src/Dockerfile" \
-      org.opencontainers.image.documentation="https://github.com/docker/blob/main/docker-in-weekend/04-dockerfile-labels-instruction/" \
+      org.opencontainers.image.source="https://github.com/docker/blob/main/docker-in-weekend/02-dockerfile-labels-instruction/src/Dockerfile" \
+      org.opencontainers.image.documentation="https://github.com/docker/blob/main/docker-in-weekend/02-dockerfile-labels-instruction/" \
       org.opencontainers.image.vendor="RSelvanTech" \
       org.opencontainers.image.licenses="Apache-2.0"
 

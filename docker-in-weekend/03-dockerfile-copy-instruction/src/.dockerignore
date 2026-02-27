@@ -1,0 +1,6 @@
+# Exclude sensitive files - never bake secrets into images
+secrets/
+
+# Exclude logs and temp files - not needed in the image
+*.log
+*.tmp
