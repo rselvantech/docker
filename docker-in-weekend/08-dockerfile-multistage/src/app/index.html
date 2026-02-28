@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- ==========================================
+         Multi-Stage Build Demo - Page Header
+         Author: RSelvanTech
+         Version: 1.0.0
+    ========================================== -->
+    <title>Multi-Stage Build Demo</title>
+
+    <!-- Inline styles -->
+    <style>
+        /* Main body styles */
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f8ff;
+            text-align: center;
+            padding: 50px;
+        }
+
+        /* Heading styles */
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+        }
+
+        /* Message styles */
+        #message {
+            color: #27ae60;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+    </style>
+
+</head>
+<body>
+
+    <!-- ==========================================
+         Main Content Section
+    ========================================== -->
+    <div class="container">
+
+        <!-- Page heading -->
+        <h1>
+            Multi-Stage Build Demo
+        </h1>
+
+        <!-- Description paragraphs -->
+        <p>
+            This page was minified by Node.js html-minifier in Stage 1.
+        </p>
+
+        <p>
+            It is now served by a lightweight Nginx image in Stage 2.
+        </p>
+
+        <!-- Dynamic message placeholder -->
+        <p id="message"></p>
+
+    </div>
+    <!-- End of main content -->
+
+    <!-- ==========================================
+         Inline JavaScript
+    ========================================== -->
+    <script>
+        // Display build info message
+        document.getElementById('message').textContent =
+            'Built with Node.js html-minifier, served with Nginx — Multi-Stage Docker Build!';
+
+        // Log build info to console
+        console.log('App loaded successfully');
+        console.log('Build tool: html-minifier');
+        console.log('Server: Nginx alpine-slim');
+    </script>
+
+</body>
+</html>

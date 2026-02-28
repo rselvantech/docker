@@ -1,0 +1,10 @@
+{
+  "name": "multistage-demo",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p dist && html-minifier --collapse-whitespace --remove-comments --minify-css true --minify-js true -o dist/index.html app/index.html"
+  },
+  "devDependencies": {
+    "html-minifier": "^4.0.0"
+  }
+}

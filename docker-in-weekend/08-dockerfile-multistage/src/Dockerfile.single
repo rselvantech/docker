@@ -1,0 +1,31 @@
+# Single stage — build tools and node_modules stay in the image
+FROM node:alpine
+
+# OCI Labels
+LABEL org.opencontainers.image.authors="RSelvanTech"
+LABEL org.opencontainers.image.title="Demo: Single Stage - Bloated"
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json .
+RUN npm install
+
+# Copy source and build
+COPY app/ ./app/
+RUN npm run build
+
+# Install nginx and create required directories
+RUN apk add --no-cache nginx && \
+    mkdir -p /etc/nginx/conf.d && \
+    mkdir -p /usr/share/nginx/html
+
+COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
+
+# Copy minified output to nginx web root
+RUN cp /app/dist/index.html /usr/share/nginx/html/index.html
+
+EXPOSE 80
+
+# Run nginx in foreground — keeps container alive
+CMD ["nginx", "-g", "daemon off;"]

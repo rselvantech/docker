@@ -1,0 +1,18 @@
+# Use nginx:alpine as base — alpine has apk package manager
+FROM nginx:1.28-alpine
+
+# OCI Labels
+LABEL org.opencontainers.image.authors="RSelvanTech"
+LABEL org.opencontainers.image.title="Demo: RUN - Unoptimized"
+
+# ❌ Bad practice — separate RUN instructions = separate layers
+RUN apk update
+RUN apk add nginx-mod-http-headers-more
+RUN rm -rf /var/cache/apk/*
+
+
+#  ✅ COPY after RUN here which is fine for order
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY html/ /usr/share/nginx/html/
+
+EXPOSE 80

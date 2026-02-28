@@ -69,7 +69,7 @@ cat > static-site/index.html << 'EOF'
 <head><title>ADD Demo</title></head>
 <body>
   <h1>Extracted from tar.gz using ADD!</h1>
-  <p><a href="/bootstrap-test.html">Bootstrap CSS Test</a></p>
+  <p><a href="/bootstrap.min.css">Bootstrap CSS (fetched from CDN)</a></p>
   <p><a href="/nginx-license.txt">Nginx License (fetched from GitHub raw URL)</a></p>
 </body>
 </html>
