@@ -83,7 +83,7 @@ COPY html/ ./html/       # copies to /app/html/
 </html>
 ```
 
-**`nginx.conf`**
+**`src/nginx.conf`**
 ```nginx
 server {
     listen 80;
@@ -108,8 +108,6 @@ server {
 | `=404` | — | If neither found, return a 404 error |
 
 **How a request flows through this config:**
-```
-You're right. The correct order following `try_files $uri $uri/ =404`:
 
 ````markdown
 **How a request flows through this config:**
@@ -147,7 +145,7 @@ try $uri/ → /usr/share/nginx/html/ + index.html ← directory found, serve ind
 
 > This is the standard Nginx config for serving a static website. The `try_files` directive is important — without it, Nginx may not correctly handle requests for files vs directories.
 
-**`.dockerignore`**
+**`src/.dockerignore`**
 ```
 *.log
 *.tmp
@@ -156,6 +154,8 @@ try $uri/ → /usr/share/nginx/html/ + index.html ← directory found, serve ind
 ---
 
 ## Dockerfile
+
+**create a file , Filename :** `src/Dockerfile`
 
 ```dockerfile
 # Use nginx:alpine-slim as base Docker Image
@@ -204,7 +204,7 @@ EXPOSE 80
 
 ### Step 1: Create Project Files
 
-Create all files as shown in **Application Files** above.
+Create all files shown in **Application Files** and **Dockerfiles** listed above.
 
 ---
 
@@ -234,11 +234,21 @@ Expected output:
     "APP_ENV=dev",
     "APP_VERSION=1.0.0",
     "APP_PORT=80",
-    "NGINX_WORKER_PROCESSES=auto"
+    "NGINX_WORKER_PROCESSES=auto",
+    "NGINX_VERSION=1.27.x",      ← inherited from nginx base image, NOT our ARG
+    "NJS_VERSION=...",            ← inherited from nginx base image
+    "PKG_RELEASE=..."             ← inherited from nginx base image
 ]
 ```
+````markdown
+> **Note:** `NGINX_VERSION`, `NJS_VERSION` and `PKG_RELEASE` are ENV variables
+> inherited from the `nginx:alpine-slim` base image — they are NOT related to our
+> `NGINX_IMAGE_TAG` ARG. Our ARG (`NGINX_IMAGE_TAG`) is not visible here because
+> ARG values are discarded after the build and never persisted in the image.
+````
 
-ENV variables are persisted in the image — visible here. ARG values (`NGINX_IMAGE_TAG`) are **not** present — they are gone after the build.
+
+
 
 ```bash
 # Verify ENV inside a running container

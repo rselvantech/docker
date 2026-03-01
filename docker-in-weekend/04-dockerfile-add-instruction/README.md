@@ -59,7 +59,7 @@ ADD https://github.com/user/repo.git#main:src/docs /app/docs     # specific subd
 
 ---
 
-## Create `static-site.tar.gz`
+## Create `src/static-site.tar.gz`
 
 ```bash
 mkdir static-site
@@ -90,7 +90,7 @@ tar -tzf static-site.tar.gz
 
 ---
 
-**Create `static-site.tar.gz`:**
+**Create `src/static-site.tar.gz`:**
 ```bash
 tar -czf static-site.tar.gz -C static-site .
 ```
@@ -146,7 +146,7 @@ cd ..
 
 ---
 
-## .dockerignore
+## src/.dockerignore
 
 ```
 # Exclude logs and temp files
@@ -156,7 +156,7 @@ cd ..
 
 ---
 
-## Dockerfile
+## src/Dockerfile
 
 ```dockerfile
 # Use nginx:alpine-slim as base Docker Image
@@ -195,7 +195,7 @@ ADD https://github.com/moby/buildkit.git#v0.13.0:docs /usr/share/nginx/html/buil
 
 ### Step 1: Create Project Files
 
-Create `static-site.tar.gz`, `.dockerignore`, and `Dockerfile` as shown above.
+Create `src/static-site.tar.gz`, `src/.dockerignore`, and `src/Dockerfile` as shown above.
 
 ---
 

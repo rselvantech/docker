@@ -76,7 +76,7 @@ ERROR: failed to solve: lstat secrets/api-key.txt: no such file or directory
 
 ## Application Files
 
-**`app-files/index.html`**
+**`src/app-files/index.html`**
 ```html
 <!DOCTYPE html>
 <html>
@@ -85,7 +85,7 @@ ERROR: failed to solve: lstat secrets/api-key.txt: no such file or directory
 </html>
 ```
 
-**`app-files/style.css`**
+**`src/app-files/style.css`**
 ```css
 body { font-family: Arial, sans-serif; background: #f0f8ff; text-align: center; }
 h1 { color: #2c3e50; margin-top: 50px; }
@@ -100,19 +100,19 @@ server {
 }
 ```
 
-**`secrets/api-key.txt`** *(sensitive file — must never go into an image)*
+**`src/secrets/api-key.txt`** *(sensitive file — must never go into an image)*
 ```
 API_KEY=super-secret-12345
 ```
 
-**`debug.log`** *(runtime log — generate a large file to make size difference visible)*
+**`src/debug.log`** *(runtime log — generate a large file to make size difference visible)*
 ```bash
 # Generate ~39KB log file using built-in yes command
 yes "$(date '+%Y-%m-%d %H:%M:%S') DEBUG: App started - Loading config - Connection timeout - Retrying request" | head -500 > debug.log
 ```
 ---
 
-## .dockerignore
+## src/.dockerignore
 
 ```
 # Exclude sensitive files - never bake secrets into images

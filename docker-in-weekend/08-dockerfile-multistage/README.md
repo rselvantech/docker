@@ -203,7 +203,20 @@ COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
 </html>
 ```
 
-**`package.json`**
+**`src/nginx/nginx.conf`**
+```nginx
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+```
+
+**`src/package.json`**
 ```json
 {
   "name": "multistage-demo",
@@ -217,7 +230,31 @@ COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
 }
 ```
 
-**`package.json` build script explained:**
+**`src/.dockerignore`**
+```
+node_modules/
+*.log
+*.tmp
+.git
+```
+
+> **Important:** `node_modules/` must be in `.dockerignore` — this prevents your local `node_modules` from being sent to the build context. Docker will install them fresh inside the container via `npm install`.
+
+---
+
+## `package.json` build script explained:**
+
+```json
+{
+...
+...
+  "scripts": {
+    "build": "mkdir -p dist && html-minifier --collapse-whitespace --remove-comments --minify-css true --minify-js true -o dist/index.html app/index.html"
+  },
+...
+...
+}
+```
 
 ```bash
 mkdir -p dist
@@ -242,17 +279,6 @@ dist/
 └── index.html   ← minified — HTML, CSS and JS all compacted into one file
 ```
 
-**`.dockerignore`**
-```
-node_modules/
-*.log
-*.tmp
-.git
-```
-
-> **Important:** `node_modules/` must be in `.dockerignore` — this prevents your local `node_modules` from being sent to the build context. Docker will install them fresh inside the container via `npm install`.
-
----
 
 ## Nginx Configuration Explained
 
@@ -318,6 +344,8 @@ Stage 1 builds:              Stage 2 copies to nginx root:
 
 ## Dockerfile.single — Single Stage (Bloated)
 
+**create a file , Filename :** `src/Dockerfile.single`
+
 ```dockerfile
 # Single stage — build tools and node_modules stay in the image
 FROM node:alpine
@@ -355,6 +383,8 @@ CMD ["nginx", "-g", "daemon off;"]
 ---
 
 ## Dockerfile — Multi-Stage (Optimized)
+
+**create a file , Filename :** `src/Dockerfile`
 
 ```dockerfile
 # ──────────────────────────────────────────
@@ -403,7 +433,7 @@ CMD ["nginx", "-g", "daemon off;"]
 
 ### Step 1: Create Project Files
 
-Create all files as shown in **Application Files** above.
+Create all files shown in **Application Files** and **Dockerfiles** listed above.
 
 ---
 

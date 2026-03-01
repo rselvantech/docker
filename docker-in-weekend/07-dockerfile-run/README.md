@@ -118,7 +118,7 @@ RUN apk add nginx-mod-http-headers-more && \
 
 ## Application Files
 
-**`html/index.html`**
+**`src/html/index.html`**
 ```html
 <!DOCTYPE html>
 <html>
@@ -131,7 +131,7 @@ RUN apk add nginx-mod-http-headers-more && \
 </html>
 ```
 
-**`nginx/nginx.conf`**
+**`src/nginx/nginx.conf`**
 ```nginx
 # Load the headers-more module
 load_module modules/ngx_http_headers_more_filter_module.so;
@@ -192,7 +192,7 @@ X-Powered-By: Docker-Demo ← custom header added ✅
 
 > **Why remove the `Server` header?** Exposing the nginx version allows attackers to look up known vulnerabilities for that specific version. Removing it is a simple security hardening best practice.
 
-**`.dockerignore`**
+**`src/.dockerignore`**
 ```
 *.log
 *.tmp
@@ -201,6 +201,8 @@ X-Powered-By: Docker-Demo ← custom header added ✅
 ---
 
 ## Dockerfile.bad — Unoptimized
+
+**create a file , Filename :** `src/Dockerfile.bad`
 
 ```dockerfile
 # Use nginx:alpine as base — alpine has apk package manager
@@ -226,6 +228,8 @@ EXPOSE 80
 ---
 
 ## Dockerfile — Optimized
+
+**create a file , Filename :** `src/Dockerfile`
 
 ```dockerfile
 # Use nginx:alpine as base — alpine has apk package manager
@@ -255,7 +259,7 @@ EXPOSE 80
 
 ### Step 1: Create Project Files
 
-Create all files as shown in **Application Files** above.
+Create all files shown in **Application Files** and **Dockerfiles** listed above.
 
 ---
 

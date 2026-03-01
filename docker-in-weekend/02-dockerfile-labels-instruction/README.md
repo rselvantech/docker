@@ -137,9 +137,9 @@ cd docker-in-weekend/02-dockerfile-labels-instruction/src
 
 ### Step 3: Create Application Files
 
-**3.1 Create `Dockerfile`:**
+**3.1 Create `src/Dockerfile`:**
 
-**3.2 Create `index.html`:**
+**3.2 Create `src/index.html`:**
 
 > **Note:** Use the same HTML content from previous lab or create your own custom page.
 

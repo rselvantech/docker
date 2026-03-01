@@ -92,7 +92,7 @@ docker run curl-tool https://example.com    # runs: curl https://example.com  (C
 
 ## Application Files
 
-**`entrypoint.sh`** — wrapper script that adds default headers to every curl call:
+**`src/entrypoint.sh`** — wrapper script that adds default headers to every curl call:
 ```bash
 #!/bin/sh
 # Real-world pattern: wrapper script as ENTRYPOINT
@@ -103,7 +103,7 @@ echo "---"
 exec curl "$@"
 ```
 
-**`.dockerignore`**
+**`src/.dockerignore`**
 ```
 *.log
 *.tmp
@@ -113,12 +113,14 @@ exec curl "$@"
 
 ## Dockerfile
 
+**create a file , Filename :** `src/Dockerfile`
+
 ```dockerfile
 # Use alpine as base — lightweight, has curl available
 FROM alpine:latest
 
 # OCI Labels
-LABEL org.opencontainers.image.authors="your-name"
+LABEL org.opencontainers.image.authors="RSelvanTech"
 LABEL org.opencontainers.image.title="Demo: CMD + ENTRYPOINT"
 LABEL org.opencontainers.image.description="Network diagnostic curl tool container"
 
@@ -281,11 +283,9 @@ docker run --rm entrypoint-only-demo https://httpbin.org/get
 
 ---
 
-### Step 10: Cleanup
+### Step 9: Cleanup
 
 ```bash
-docker stop signal-test 2>/dev/null
-docker rm signal-test 2>/dev/null
 docker rmi curl-tool cmd-only-demo entrypoint-only-demo
 ```
 
