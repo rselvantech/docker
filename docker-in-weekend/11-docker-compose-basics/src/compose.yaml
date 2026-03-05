@@ -1,0 +1,16 @@
+name: taskapp
+
+services:
+  db:
+    image: mysql:8.4
+    container_name: taskapp-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: dbpassword11
+      MYSQL_DATABASE: taskappdb
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+volumes:
+  db-data:
