@@ -1,0 +1,36 @@
+name: profiledemo
+services:
+  web: 
+    image: nginx:1.29-alpine
+    container_name: profiledemo-web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    networks:
+      - frontend
+  
+  db:
+    image: mysql:8.4
+    container_name: profiledemo-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: dbpassword11
+      MYSQL_DATABASE: appdb
+    networks:
+      - backend
+  
+  netshoot:
+    image: nicolaka/netshoot:v0.15
+    container_name: profiledemo-netshoot
+    profiles:
+      - debug
+    entrypoint: ["sleep", "infinity"]
+    networks: 
+      - frontend
+      - backend
+
+networks:
+  frontend:
+    name: profiledemo-frontend
+  backend:
+    name: prfiledemo-backend

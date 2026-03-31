@@ -1,0 +1,13 @@
+name: builddemo
+
+services:
+  web:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    image: builddemo-web:latest
+    container_name: builddemo-web
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    

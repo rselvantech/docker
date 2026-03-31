@@ -1,0 +1,21 @@
+name: watchdemo
+
+services:
+  web:
+    build:
+      context: .
+    container_name: watchdemo-web
+    ports:
+      - "8080:80"
+    develop:
+      watch:
+        - action: sync
+          path: ./html
+          target: /usr/share/nginx/html
+          ignore:
+            - "*.md"
+        
+        - action: sync+restart
+          path: ./nginx.conf
+          target: /etc/nginx/conf.d/default.conf
+          
