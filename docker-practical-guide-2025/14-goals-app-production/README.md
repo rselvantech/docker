@@ -1,6 +1,6 @@
-# Demo-14: Production-Ready Multi-Container App — Multi-Stage Builds, nginx Proxy & Configurable Environments
+# Docker Compose - Production-Ready Multi-Container Goals Application Lab 
 
-## Overview
+## Lab Overview
 
 Demo-13 built a working three-tier Goals App using Docker Compose. That setup was
 optimised for **development** — a live-reload React dev server, bind-mounted source
@@ -57,8 +57,8 @@ docker info | grep "Server Version"
 
 **Expected:**
 ```text
-Docker Compose version v2.x.x
-Server Version: 27.x.x
+Docker Compose version v2.39.x
+Server Version: 28.4.x
 ```
 
 ---
@@ -124,11 +124,24 @@ If the React app loaded from `http://localhost:3000`, then `/goals` becomes
 `http://localhost:3000/goals`. The browser sends the API call to the same server
 that served the page.
 
-nginx (running inside the frontend container) receives this request. nginx runs
-on the server — it **can** resolve internal hostnames (`backend`, `goals-backend-svc`).
-nginx proxies the request to the backend.
+
+nginx is the key — it runs **inside the container network** where it can
+resolve internal hostnames (`backend`, `goals-backend-svc`). The browser
+only ever talks to nginx. nginx talks to the backend on the browser's behalf.
+This is the standard production pattern for any React + API application.
+
+Demo-14 fixes this with two changes working together:
 
 ```
+Before (Demo-13):
+  Browser → fetch('http://localhost/goals') → hits Docker port 80 on laptop
+  Works by coincidence. Breaks everywhere else.
+
+After (Demo-14):
+  Browser → fetch('/goals') → same host as the page → nginx (port 3000)
+  nginx → proxy_pass → backend container (internal DNS) → MongoDB
+  Works in Docker Compose, Kubernetes, and any environment.
+
 Browser
     │  fetch('/goals')
     │  → browser expands to: http://localhost:3000/goals
@@ -156,7 +169,7 @@ A multi-stage build uses multiple `FROM` instructions in one Dockerfile. Each
 
 ```dockerfile
 # Stage 1: builder — has Node, npm, all build tools
-FROM node:20-alpine AS builder
+FROM node:18-alpine AS builder
 RUN npm ci && npm run build
 # Output: /app/build/ (compiled static files)
 
@@ -244,6 +257,7 @@ best practice. New environments set the vars; existing environments work without
 ├── README.md                       ← this file
 ├── docker-compose.yaml             ← updated for production images
 ├── env/
+|   ├── mongodb.env                 ← NEW: serves mongodb vars  
 │   └── backend.env                 ← updated with new vars
 └── src/
     ├── backend/
@@ -251,10 +265,11 @@ best practice. New environments set the vars; existing environments work without
     │   ├── Dockerfile              ← REPLACED: production build
     │   ├── models/
     │   │   └── goal.js             ← unchanged
-    │   └── package.json            ← unchanged
+    │   └── package.json            ← NEW: serves for 'npm ci'
     └── frontend/
         ├── Dockerfile              ← REPLACED: multi-stage build with nginx
         ├── nginx.conf              ← NEW: serves React + proxies /goals
+    │   ├── package.json            ← unchanged        
         └── src/
             ├── App.js              ← CHANGED: relative URL fetch('/goals')
             └── components/         ← unchanged
@@ -268,9 +283,7 @@ mkdir -p 14-goals-app-production/src
 cd 14-goals-app-production
 
 # Copy source files from Demo-13
-cp -r ../13-docker-compose-goals-app/src ./
-cp -r ../13-docker-compose-goals-app/env ./
-cp ../13-docker-compose-goals-app/docker-compose.yaml ./
+cp -r ../13-docker-compose-goals-app/src/* ./src/
 ```
 
 **Verify structure:**
@@ -281,6 +294,10 @@ tree src -L 3
 **Expected:**
 ```text
 src/
+│
+├── docker-compose.yaml
+├── env/
+│   └── backend.env
 ├── backend/
 │   ├── Dockerfile
 │   ├── app.js
@@ -297,6 +314,8 @@ src/
 
 ---
 
+## Lab Instructions
+
 ## Step 1: Change the Frontend — Relative API URL
 
 ### What changes
@@ -306,7 +325,7 @@ use `http://localhost/goals`. Change them all to `/goals` — a relative path.
 
 **Edit `src/frontend/src/App.js` — find and replace three lines:**
 
-**Line ~18 — fetch goals on load:**
+**Line ~17 — fetch goals on load:**
 ```javascript
 // Before
 const response = await fetch('http://localhost/goals');
@@ -315,7 +334,7 @@ const response = await fetch('http://localhost/goals');
 const response = await fetch('/goals');
 ```
 
-**Line ~43 — add a goal:**
+**Line ~42 — add a goal:**
 ```javascript
 // Before
 const response = await fetch('http://localhost/goals', {
@@ -324,7 +343,7 @@ const response = await fetch('http://localhost/goals', {
 const response = await fetch('/goals', {
 ```
 
-**Line ~68 — delete a goal:**
+**Line ~81 — delete a goal:**
 ```javascript
 // Before
 const response = await fetch('http://localhost/goals/' + goalId, {
@@ -340,9 +359,9 @@ grep -n "fetch(" src/frontend/src/App.js
 
 **Expected:**
 ```text
-18:        const response = await fetch('/goals');
-43:        const response = await fetch('/goals', {
-68:        const response = await fetch('/goals/' + goalId, {
+17:        const response = await fetch('/goals');
+42:        const response = await fetch('/goals', {
+81:        const response = await fetch('/goals/' + goalId, {
 ```
 
 ---
@@ -377,37 +396,206 @@ server {
 }
 ```
 
-**Every directive explained:**
+### Directive-by-directive explanation
 
-`listen 3000` — nginx listens on port 3000. Matches Docker Compose and any
-Kubernetes Service port configuration in this course.
+---
 
-`location /` — handles all requests. `root` points to where the React build
-output was placed. `try_files $uri $uri/ /index.html` — if the requested path
-is not a real file (e.g. `/goals/new` is a React route, not a file), serve
-`index.html` instead. React Router then handles the URL. Without this, page
-refreshes on any non-root URL return a 404.
+**`listen 3000`**
 
-`location /goals` — intercepts requests whose path starts with `/goals`.
-These are API calls from the React app.
+Tells nginx which port to accept incoming connections on. We use 3000 because:
+- The React app was served on port 3000 in the dev server (Demo-13)
+- The docker-compose `ports: "3000:3000"` maps host port 3000 to this
+- Consistency makes port-forwarding in Kubernetes predictable
 
-`resolver 127.0.0.11 valid=10s` — Docker's internal DNS resolver address.
-This is **required** when `proxy_pass` uses a variable. Without a `resolver`
-directive, nginx refuses to start when `proxy_pass` contains a variable.
-`valid=10s` re-resolves the hostname every 10 seconds — essential when
-container IPs change (pod restarts, scaling).
+Using port 80 inside the container would also work but 3000 makes it clear
+this is the frontend service, not a raw web server.
 
-`set $backend http://${BACKEND_HOST}:80` — stores the proxy target in a
-variable. The `${BACKEND_HOST}` placeholder is replaced by `envsubst` at
-container start. Using a variable (instead of inline `proxy_pass`) forces
-nginx to use the `resolver` for every request — correct behaviour when the
-backend can restart and change IP.
+---
 
-`proxy_pass $backend` — forwards the request to the backend.
+**`location /`**
 
-`proxy_set_header` lines — pass the real client IP and hostname to the
-backend. Standard reverse proxy headers — the backend logs show real client
-addresses instead of nginx's IP.
+Matches all requests that do not match a more specific `location` block.
+Since `location /goals` is more specific, API calls go there. Everything else
+— the React HTML, JavaScript bundles, CSS, images — is handled here.
+
+```
+GET /                    → location /   (serves index.html)
+GET /static/js/main.js   → location /   (serves the JS bundle)
+GET /goals               → location /goals (proxied to backend)
+GET /goals/abc123        → location /goals (proxied to backend)
+```
+
+**`root /usr/share/nginx/html`** — the directory where nginx looks for files
+to serve. This is where `COPY --from=builder /app/build` puts the React build
+output in the Dockerfile. When nginx receives `GET /static/js/main.js`, it
+looks for `/usr/share/nginx/html/static/js/main.js` on disk.
+
+**`index index.html`** — when a request is for a directory (e.g. `GET /`),
+nginx serves `index.html` from that directory automatically.
+
+**`try_files $uri $uri/ /index.html`** — this is the most important directive
+for a single-page React app. It tells nginx to try three things in order:
+
+```
+1. $uri       → look for an exact file match
+                 GET /logo.png → /usr/share/nginx/html/logo.png ✅ (file exists)
+
+2. $uri/      → look for a directory with an index file
+                 GET /about/ → /usr/share/nginx/html/about/index.html
+
+3. /index.html → if neither exists, serve index.html
+                 GET /dashboard → no file on disk → serve index.html
+                 React Router then reads the URL and renders /dashboard ✅
+```
+
+Without `try_files`, refreshing the browser on any React route other than `/`
+returns a 404 — nginx looks for a real file called `/dashboard` and finds none.
+With `try_files`, nginx always falls back to `index.html` and React handles routing.
+
+---
+
+**`location /goals`**
+
+Matches any request whose path starts with `/goals`. This is the API proxy block.
+
+```
+GET  /goals          → proxied to backend
+POST /goals          → proxied to backend
+DELETE /goals/abc123 → proxied to backend
+```
+
+The React app calls `/goals` as a relative URL — the browser expands it to
+`http://localhost:3000/goals` (same host as the page). nginx intercepts it
+here and forwards it to the backend service.
+
+---
+
+**`resolver 127.0.0.11 valid=10s`**
+
+This is required when `proxy_pass` uses a variable (explained in the next
+directive). It tells nginx which DNS server to use when resolving hostnames.
+
+`127.0.0.11` is Docker's internal DNS resolver — the address Docker assigns
+to its embedded DNS server in every container network. This is how container
+names (`backend`, `goals-backend-svc`) resolve to IP addresses inside Docker
+and Kubernetes.
+
+`valid=10s` — re-resolve the hostname every 10 seconds. Without this, nginx
+resolves the hostname once at startup and caches it forever. If the backend
+container restarts and gets a new IP address, nginx keeps sending traffic to
+the old IP until it is restarted too. With `valid=10s`, nginx checks DNS every
+10 seconds and picks up the new IP automatically.
+
+> **Without `resolver`, nginx refuses to start** when `proxy_pass` uses a
+> variable. The error is:
+> `nginx: [emerg] no resolver defined to resolve <hostname>`
+> The `resolver` directive is mandatory whenever you use a variable in `proxy_pass`.
+
+---
+
+**`set $backend http://${BACKEND_HOST}:80`**
+
+This is the most important line — and the reason it is written this way instead
+of `proxy_pass http://backend:80` directly needs a full explanation.
+
+**Why not write `proxy_pass http://backend:80` directly?**
+
+If you write the hostname inline:
+```nginx
+location /goals {
+    proxy_pass http://backend:80;    # hostname inline
+}
+```
+
+nginx resolves `backend` **once at startup** and caches the result permanently.
+This creates two problems:
+
+**Problem 1 — The container might not exist at startup.**
+During `docker compose up`, containers start in sequence. If nginx starts before
+the backend container is created, DNS resolution of `backend` fails and nginx
+refuses to start entirely — even though the backend will be available seconds later.
+
+**Problem 2 — Stale IP after restart.**
+If the backend container restarts (crash, update, scale), it gets a new IP
+address. nginx is still sending traffic to the old IP. All proxied requests fail
+until nginx itself is restarted.
+
+**The variable pattern solves both problems:**
+```nginx
+resolver        127.0.0.11 valid=10s;   # use Docker DNS, re-resolve every 10s
+set $backend    http://${BACKEND_HOST}:80;
+proxy_pass      $backend;
+```
+
+When `proxy_pass` receives a variable, nginx defers DNS resolution to
+**request time** — every incoming request triggers a DNS lookup (cached for
+`valid=10s`). This means:
+
+- nginx starts successfully even if the backend does not exist yet ✅
+- When the backend restarts, the next request after 10 seconds picks up the
+  new IP ✅
+- The hostname itself is configurable — `${BACKEND_HOST}` is substituted at
+  container start by `envsubst`, making the same image work with any backend
+  hostname ✅
+
+**Why `${BACKEND_HOST}` and not a fixed name?**
+
+`${BACKEND_HOST}` is an environment variable placeholder processed by `envsubst`
+when the nginx container starts. The nginx official Docker image automatically
+runs `envsubst` on any file in `/etc/nginx/templates/`, replacing `${VAR}`
+with the value of the environment variable named `VAR`.
+
+```
+Container starts with: BACKEND_HOST=backend
+envsubst processes:    set $backend http://${BACKEND_HOST}:80;
+Result written to:     set $backend http://backend:80;
+nginx reads result and starts
+```
+
+The same image works in both environments by changing only the env var:
+
+| Environment | `BACKEND_HOST` value | `proxy_pass` resolves to |
+|---|---|---|
+| Docker Compose | `backend` | `http://backend:80` (Compose service name) |
+| Kubernetes | `goals-backend-svc` | `http://goals-backend-svc:80` (K8s Service name) |
+
+No image rebuild needed between environments.
+
+---
+
+**`proxy_pass $backend`**
+
+Forwards the incoming request to the URL stored in `$backend`. nginx acts as
+a transparent proxy — the backend receives the request as if it came directly
+from the client, with the proxy headers added below.
+
+---
+
+**`proxy_set_header Host $host`**
+
+Passes the original `Host` header to the backend. Without this, the backend
+receives `Host: localhost` (nginx's own hostname). With it, the backend receives
+the actual hostname the client used (`Host: localhost:3000`). Some backends use
+the `Host` header for routing or logging — passing it correctly is standard
+reverse proxy practice.
+
+**`proxy_set_header X-Real-IP $remote_addr`**
+
+Passes the client's actual IP address to the backend in the `X-Real-IP` header.
+Without this, the backend sees all requests coming from `127.0.0.1` (nginx's IP
+from the backend's perspective). With it, the backend can log the real client IP
+for access logs and security analysis.
+
+**`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`**
+
+Standard header for proxy chains. If there are multiple proxies between the
+client and the backend (load balancer → nginx → backend), this header accumulates
+all intermediate IPs as a comma-separated list:
+```
+X-Forwarded-For: <client-ip>, <proxy1-ip>, <proxy2-ip>
+```
+The backend can read the first IP in the list to find the original client.
+
 
 ---
 
@@ -419,7 +607,7 @@ The current Dockerfile runs the React development server. Replace it entirely.
 
 ```dockerfile
 # ── Stage 1: build ──────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:18-alpine AS builder
 WORKDIR /app
 
 # Install dependencies first — cached unless package.json changes
@@ -471,6 +659,14 @@ CMD ["nginx", "-g", "daemon off;"]
 - React source code
 - node_modules (thousands of files)
 - Development dependencies
+
+>**Why Node 18, not Node 20?** react-scripts 5.0.1 (used in this project)
+was built against Node 16/18 era OpenSSL. Node 20 uses OpenSSL 3 which
+breaks webpack's crypto layer with the error:
+Error: error:0308010C:digital envelope routines::unsupported
+Node 18 uses OpenSSL 1.1 which is fully compatible. Node 18 is only used
+to compile React — the final nginx image contains no Node at all, so this
+choice has zero impact on the production image.
 
 ---
 
@@ -537,23 +733,68 @@ mongoose.connect(
 );
 ```
 
-**Verify the edit:**
-```bash
-grep -A5 "const mongoHost" src/backend/app.js
-```
-
-**Expected:**
-```text
-const mongoHost = process.env.MONGODB_HOST || 'mongodb';
-const mongoDatabase = process.env.MONGODB_DATABASE || 'course-goals';
-
-mongoose.connect(
-  `mongodb://...@${mongoHost}:27017/${mongoDatabase}?...`,
-```
 
 ---
 
-## Step 5: Replace the Backend Dockerfile
+## Step 5: Generate `src/backend/package-lock.json` for the backend
+
+**Before replacing the Dockerfile, generate `package-lock.json` for the backend.**
+
+The original Demo-13 backend used a bind mount — npm ran inside the container
+at startup, so no lock file was ever committed. `npm ci` requires a lock file.
+Generate it now using Docker so that npm does not need to be installed locally:
+```bash
+cd src/backend
+
+docker run --rm \
+  -v $(pwd):/app \
+  -w /app \
+  node:18-alpine \
+  npm install
+
+cd ..
+```
+
+**What each part of this command does:**
+```
+docker run                 Run a container
+  --rm                     Remove the container automatically when it exits
+                           (no cleanup needed — container is gone after npm runs)
+  -v $(pwd):/app           Bind mount: map the current directory on your host
+                           to /app inside the container
+                           $(pwd) = the backend/ directory you cd'd into
+                           /app   = where the container sees your files
+  -w /app                  Set the working directory inside the container to /app
+                           (equivalent to cd /app before running the command)
+  node:18-alpine           The image to run — Node 18 on Alpine Linux (~50MB)
+                           Used here only because it has npm — nothing is installed
+                           permanently on your machine
+  npm install              The command to run inside the container
+                           Reads package.json, resolves dependencies, writes
+                           package-lock.json — all into /app which is your
+                           bind-mounted host directory
+```
+
+The result: `package-lock.json` appears in your `backend/` directory on the
+host, written by npm running inside the container. Your machine never needs
+Node or npm installed.
+
+**Verify the lock file was created:**
+```bash
+ls src/backend/package-lock.json
+```
+
+**Expected:** File exists.
+
+> **Why use Docker to run npm?** If npm is not installed on your machine,
+> this approach runs `npm install` inside a temporary Node 18 container
+> with the backend directory bind-mounted. The `package-lock.json` is
+> written directly to your host directory. The container is removed after.
+> If npm IS installed locally, you can run `npm install` directly instead.
+
+---
+
+## Step 6: Replace the Backend Dockerfile
 
 The Demo-13 backend Dockerfile uses `nodemon` for live reload and expects a
 bind-mounted source directory. Replace it with a production build.
@@ -562,13 +803,13 @@ bind-mounted source directory. Replace it with a production build.
 
 ```dockerfile
 # ── Stage 1: install production dependencies ─────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:18-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 # ── Stage 2: production image ────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:18-alpine
 WORKDIR /app
 
 # The app writes access logs here — directory must exist in the image
@@ -595,7 +836,7 @@ CMD ["node", "app.js"]
 
 ---
 
-## Step 6: Update `env/backend.env`
+## Step 7a: Update `env/backend.env`
 
 Add the two new environment variables. The defaults in `app.js` already
 handle the Docker Compose case, but making them explicit in the env file
@@ -614,22 +855,55 @@ MONGODB_DATABASE=course-goals
 
 ---
 
-## Step 7: Update `docker-compose.yaml`
+## Step 7b: Add `env/mongodb.env``
+
+
+Create `env/mongodb.env`:
+```bash
+MONGO_INITDB_ROOT_USERNAME=rselvantech
+MONGO_INITDB_ROOT_PASSWORD=passWD
+```
+
+MongoDB credentials now live in an env file alongside the backend credentials they are moved here from inline `environment:`:
+
+>Add `env/mongodb.env` to `.gitignore` alongside `env/backend.env`:
+
+
+---
+
+## Step 8: Update `docker-compose.yaml`
 
 **Replace `docker-compose.yaml` in full:**
 
 ```yaml
+name: goals
+
 services:
   mongodb:
     image: mongo:6.0
     volumes:
       - data:/data/db
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: rselvantech
-      MONGO_INITDB_ROOT_PASSWORD: passWD
+    env_file:
+      - ./env/mongodb.env
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --eval
+        - "db.adminCommand('ping')"
+        - --username
+        - rselvantech
+        - --password
+        - passWD
+        - --authenticationDatabase
+        - admin
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   backend:
-    build: ./src/backend
+    build: ./backend
     ports:
       - "80:80"
     volumes:
@@ -637,10 +911,11 @@ services:
     env_file:
       - ./env/backend.env
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
 
   frontend:
-    build: ./src/frontend
+    build: ./frontend
     ports:
       - "3000:3000"
     environment:
@@ -664,9 +939,100 @@ volumes:
 | `backend` — removed anonymous volume `/app/node_modules` | Not needed without bind mount |
 | `mongo:6.0` — pinned version | Reproducible builds |
 
+
+**Other Changes from Demo-13: `name: goals`**
+
+Sets a fixed project name for Docker Compose. Without this, Compose uses the
+directory name as the project name — resulting in container names like
+`src-backend-1`, `src-frontend-1`, `src-mongodb-1` (based on the `src/`
+directory).
+
+With `name: goals`, container names become `goals-backend-1`,
+`goals-frontend-1`, `goals-mongodb-1` — immediately meaningful when you run
+`docker ps` across multiple projects.
+
+It also means the named volumes are created as `goals_data` and `goals_logs`
+instead of `src_data` and `src_logs`. Consistent naming across machines and
+team members regardless of what directory they cloned the repo into.
+
+**Other Changes from Demo-13: `healthcheck` on mongodb**
+
+```yaml
+healthcheck:
+  test:
+    - CMD
+    - mongosh
+    - --eval
+    - "db.adminCommand('ping')"
+    - --username
+    - rselvantech
+    - --password
+    - passWD
+    - --authenticationDatabase
+    - admin
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
+```
+
+MongoDB takes time to initialise — especially on first run when it creates
+the root user and initialises the data directory. The healthcheck runs
+`mongosh --eval "db.adminCommand('ping')"` every 10 seconds. When it returns
+`{ok: 1}`, MongoDB is ready to accept connections.
+
+`start_period: 30s` — Docker does not count failed health checks during the
+first 30 seconds as failures. This gives MongoDB time to initialise without
+being marked unhealthy prematurely.
+
+`interval: 10s` — check every 10 seconds after `start_period`.
+`timeout: 5s` — if `mongosh` does not respond within 5 seconds, mark as failed.
+`retries: 5` — after 5 consecutive failures (after `start_period`), mark as unhealthy.
+
 ---
 
-## Step 8: Build and Test with Docker Compose
+
+**Other Changes from Demo-13: `depends_on` with `condition: service_healthy` on backend**
+
+```yaml
+backend:
+  depends_on:
+    mongodb:
+      condition: service_healthy
+```
+
+This is the key change. Previously:
+```yaml
+depends_on:
+  - mongodb    # only waits for container start, not MongoDB readiness
+```
+
+The basic `depends_on` only waits for the MongoDB container to exist — not for
+MongoDB to be accepting connections. If MongoDB takes 15 seconds to initialise,
+the backend starts after 1 second, tries to connect, fails, and exits.
+
+With `condition: service_healthy`, Docker Compose waits until the MongoDB
+healthcheck passes before starting the backend. The backend always connects to
+a fully ready MongoDB.
+
+```
+docker compose up -d
+
+1s  → mongodb container starts
+2s  → healthcheck starts (start_period begins)
+30s → start_period ends, healthchecks count
+40s → mongosh ping succeeds → mongodb is service_healthy
+40s → backend container starts (was waiting for service_healthy)
+41s → backend connects to MongoDB successfully ✅
+42s → frontend container starts
+```
+
+**Before this change:** backend exit code 0 if MongoDB wasn't ready.
+**After this change:** backend always starts after MongoDB is confirmed ready.
+
+---
+
+## Step 9: Build and Test with Docker Compose
 
 ```bash
 # Build both images from scratch — no cache from Demo-13 dev images
@@ -680,22 +1046,35 @@ docker compose build --no-cache
  ✔ frontend  Built
 ```
 
-**Start all services:**
+**Start all services — using `-v` to ensure a clean volume state:**
 ```bash
+docker compose down -v
 docker compose up -d
 ```
 
-**Verify all running:**
+> **Why `docker compose down -v` first?** The `-v` flag removes named volumes
+> (`data` and `logs`). If a `data` volume exists from a previous run — even
+> from Demo-13 — MongoDB may fail to start with exit code 62 due to data
+> directory ownership or version incompatibility. Starting with a clean volume
+> ensures MongoDB initialises correctly with the credentials in
+> `env/backend.env`.
+>
+> **This is safe for this demo** — MongoDB reinitialises cleanly using
+> `MONGO_INITDB_ROOT_USERNAME` and `MONGO_INITDB_ROOT_PASSWORD`. Any goals
+> you added in Demo-13 will be gone, which is expected — Demo-14 is a fresh
+> production build.
+
+**Verify all three containers are running:**
 ```bash
 docker compose ps
 ```
 
-**Expected:**
+**Expected — all three STATUS: Up:**
 ```text
-NAME              STATUS    PORTS
-...-mongodb-1     Up        27017/tcp
-...-backend-1     Up        0.0.0.0:80->80/tcp
-...-frontend-1    Up        0.0.0.0:3000->3000/tcp
+NAME                IMAGE          STATUS
+goals-backend-1    goals-backend    Up
+goals-frontend-1   goals-frontend   Up
+goals-mongodb-1    mongo:6.0        Up
 ```
 
 **Verify backend connected to MongoDB with new configurable connection:**
@@ -726,8 +1105,8 @@ docker images | grep goals
 
 **Expected — frontend ~25MB, backend ~180MB (not 400MB+):**
 ```text
-14-goals-...-frontend   latest   25MB
-14-goals-...-backend    latest   180MB
+goals-frontend   latest   48.9MB
+goals-backend    latest   139MB
 ```
 
 ### Test the Full Application
@@ -773,7 +1152,7 @@ docker compose up -d
 Open `http://localhost:3000` — goal still appears (volume preserved). ✅
 
 ```bash
-docker compose down
+docker compose down -v
 ```
 
 ---
@@ -846,7 +1225,9 @@ Go to `hub.docker.com/r/rselvantech/goals-backend/tags` and
 | `src/frontend/Dockerfile` | Replaced | Multi-stage: Node builds → nginx serves |
 | `src/backend/app.js` | Modified | `MONGODB_HOST` + `MONGODB_DATABASE` env vars |
 | `src/backend/Dockerfile` | Replaced | Production: `node app.js`, no nodemon |
+| `src/backend/package-lock.json` | Created | created to run `npm ci` |
 | `env/backend.env` | Modified | Added `MONGODB_HOST` and `MONGODB_DATABASE` |
+| `env/mongodb.env` | Created | Mongodb credentials moved from inline to this file |
 | `docker-compose.yaml` | Modified | `BACKEND_HOST` env, removed dev volumes |
 
 **Images pushed:**

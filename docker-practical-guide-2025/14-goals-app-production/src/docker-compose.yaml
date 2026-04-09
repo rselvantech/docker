@@ -1,0 +1,50 @@
+name: goals
+
+services:
+  mongodb:
+    image: mongo:6.0
+    volumes:
+      - data:/data/db
+    env_file:
+      - ./env/mongodb.env
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --eval
+        - "db.adminCommand('ping')"
+        - --username
+        - rselvantech
+        - --password
+        - passWD
+        - --authenticationDatabase
+        - admin
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    build: ./backend
+    ports:
+      - "80:80"
+    volumes:
+      - logs:/app/logs
+    env_file:
+      - ./env/backend.env
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_HOST: backend
+    depends_on:
+      - backend
+
+volumes:
+  data:
+  logs:
