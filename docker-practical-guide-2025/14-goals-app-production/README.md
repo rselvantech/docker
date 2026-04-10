@@ -63,12 +63,224 @@ Server Version: 28.4.x
 
 ---
 
-## The Core Problem — Why `http://localhost` Breaks Outside Docker Compose
+## How this Demo Solution Works — Docker Compose
+
+### Modules and How They Interwork
+
+The Goals App has three services running as Docker containers on a single
+Docker network called `goals_default` (created automatically by Compose):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Docker network: goals_default                                  │
+│                                                                 │
+│  ┌──────────────────┐    ┌──────────────────┐    ┌───────────┐  │
+│  │   goals-frontend │    │  goals-backend   │    │  mongodb  │  │
+│  │   nginx:1.25     │    │  node:18-alpine  │    │  mongo:6  │  │
+│  │   port 3000      │    │  port 80         │    │  port     │  │
+│  │                  │──▶│                  │───▶│  27017    │  │
+│  │  static files    │    │  REST API        │    │           │  │
+│  │  + API proxy     │    │  /goals CRUD     │    │  data     │  │
+│  └──────────────────┘    └──────────────────┘    │  volume   │  │
+│          │                                       └───────────┘  │
+└──────────┼──────────────────────────────────────────────────────┘
+           │ port 3000 published to host
+           ▼
+      Your laptop
+      http://localhost:3000
+```
+
+**Docker Compose network and DNS:**
+Every service in a Compose file is automatically reachable by its service name
+as a DNS hostname within the `goals_default` network. Docker runs an internal
+DNS server at `127.0.0.11` inside every container. When nginx resolves
+`backend`, it queries `127.0.0.11` which returns the backend container's IP.
+
+```
+Container: goals-frontend-1
+  /etc/resolv.conf:
+    nameserver 127.0.0.11
+    search goals_default.example.com
+
+nginx resolves "backend":
+  → queries 127.0.0.11
+  → Docker DNS returns 172.18.0.3 (backend container IP)
+  → nginx connects to 172.18.0.3:80
+```
+
+---
+
+### nginx's Dual Role — Static File Server and API Proxy
+
+nginx inside the frontend container does two completely different jobs
+simultaneously, determined by the URL path of each incoming request:
+
+```
+Incoming request
+       │
+       ▼
+nginx (port 3000)
+       │
+       ├── path starts with /goals ──▶ API Proxy ──▶ backend:80
+       │
+       └── everything else ──────────▶ Static File Server
+                                        /usr/share/nginx/html/
+```
+
+**Role 1 — Static File Server (`location /`):**
+
+The React build output — `index.html`, JavaScript bundles, CSS, images — was
+compiled by Node.js during `docker build` and copied into the nginx image at
+`/usr/share/nginx/html/`. nginx serves these files directly from disk:
+
+```
+GET /                    → /usr/share/nginx/html/index.html
+GET /static/js/main.js   → /usr/share/nginx/html/static/js/main.js
+GET /static/css/main.css → /usr/share/nginx/html/static/css/main.css
+GET /favicon.ico         → /usr/share/nginx/html/favicon.ico
+```
+
+`try_files $uri $uri/ /index.html` handles React Router — any URL that is not
+a real file on disk (e.g. `/about`, `/dashboard`) returns `index.html` so
+React handles the routing client-side.
+
+**Role 2 — API Proxy (`location /goals`):**
+
+The React JavaScript, once loaded in the browser, calls `/goals` as a relative
+URL. The browser sends this to the same host and port it loaded the page from
+(`localhost:3000`). nginx intercepts it and forwards it to the backend:
+
+```
+GET /goals      → proxy_pass http://backend:80/goals
+POST /goals     → proxy_pass http://backend:80/goals
+DELETE /goals/x → proxy_pass http://backend:80/goals/x
+```
+
+The backend receives the request, processes it, and returns a JSON response.
+nginx passes the response back to the browser. The browser never communicates
+directly with the backend — nginx is the intermediary.
+
+---
+
+### How `${BACKEND_HOST}` Works at Container Start
+
+`BACKEND_HOST=backend` is set in `docker-compose.yaml`. When the frontend
+container starts, the nginx Docker image automatically runs `envsubst` on
+every file in `/etc/nginx/templates/`, replacing `${BACKEND_HOST}` with its
+value before nginx reads the config:
+
+```
+Container starts
+    ↓
+envsubst reads: /etc/nginx/templates/default.conf.template
+    ${BACKEND_HOST} → replaced with "backend"
+    ↓
+Writes: /etc/nginx/conf.d/default.conf
+    proxy_pass http://backend:80;   ← literal hostname
+    ↓
+nginx starts and reads the resolved config
+nginx resolves "backend" → 127.0.0.11 → 172.18.0.3
+```
+
+---
+
+### Complete Message Flow — Adding a Goal
+
+**Step 1: User opens the browser**
+```
+User types: http://localhost:3000
+Browser: GET http://localhost:3000/
+  → Docker port mapping: host:3000 → goals-frontend-1:3000
+  → nginx: path "/" → serve /usr/share/nginx/html/index.html
+  → Browser receives HTML + <script> tags
+```
+
+**Step 2: Browser loads the React app**
+```
+Browser: GET http://localhost:3000/static/js/main.js
+  → nginx: path "/static/js/..." → serve from disk
+  → Browser receives JavaScript bundle
+  → React app initialises in browser memory
+  → React calls GET /goals to load existing goals
+    → nginx: path "/goals" → proxy_pass http://backend:80/goals
+    → backend queries MongoDB: db.goals.find()
+    → returns JSON: {"goals": [...]}
+  → React renders the goals list
+```
+
+**Step 3: User types a goal and clicks Add**
+```
+User action → React event handler → addGoalHandler()
+
+Browser: POST http://localhost:3000/goals
+  body: {"text": "Learn Docker multi-stage builds"}
+  → nginx: path "/goals" → proxy_pass http://backend:80/goals
+    → DNS: "backend" → 127.0.0.11 → 172.18.0.3
+    → TCP: nginx connects to backend container port 80
+    → backend receives POST /goals
+    → mongoose: db.goals.insertOne({text: "..."})
+    → MongoDB: writes to /data/db (named volume: goals_data)
+    → returns: {"goal": {"id": "abc123", "text": "..."}}
+  → nginx passes response back to browser
+  → React: updates UI to show new goal
+```
+
+**Step 4: User reloads the page**
+```
+Browser: GET http://localhost:3000/
+  → nginx serves index.html again
+  → React initialises again
+  → GET /goals → backend → MongoDB reads from volume
+  → Goal still there — data persisted in named volume
+```
+
+**DNS resolution summary (Docker Compose):**
+```
+frontend → backend:80
+  nginx resolves "backend"
+  → /etc/resolv.conf: nameserver 127.0.0.11
+  → Docker DNS returns backend container IP
+  → TCP connection established
+
+backend → mongodb:27017
+  mongoose resolves "mongodb"  ← hardcoded in connection string
+  → /etc/resolv.conf: nameserver 127.0.0.11
+  → Docker DNS returns mongodb container IP
+  → MongoDB connection established
+```
+
+---
+
+### Why the Browser Never Talks to the Backend Directly
+
+This is the fundamental design principle. The React app runs in the browser —
+outside Docker, outside any network, on the user's machine. It cannot resolve
+Docker internal hostnames like `backend` or `goals-backend-svc`.
+
+```
+Browser (user's laptop)
+    ↑↓ only talks to: localhost:3000
+
+Docker network (invisible to browser)
+    frontend ←→ backend ←→ mongodb
+```
+
+By using a relative URL (`/goals` not `http://backend/goals`), the browser
+sends API calls to `localhost:3000/goals` — the same address it loaded the
+page from. nginx receives it and proxies it internally. The browser is
+completely unaware that a separate backend service exists.
+
+---
+
+
+## Concepts
+
+### The Core Problem in Demo 13 — Why `http://localhost` Breaks Outside Docker Compose
 
 Before writing a single line of code, it is essential to understand **why** the
 current setup is broken for any environment beyond your laptop.
 
-### How React apps actually run
+**How React apps actually run**
 
 React is not a server. When a user opens `http://localhost:3000`, the browser
 downloads a JavaScript bundle and executes it entirely on the **user's machine**.
@@ -85,7 +297,7 @@ User's browser (laptop)
 localhost:80 on the laptop
 ```
 
-### Why it works in Demo-13 (by coincidence)
+**Why it works in Demo-13 (by coincidence)**
 
 Demo-13's `docker-compose.yaml` publishes the backend to port 80 on the host:
 
@@ -99,7 +311,7 @@ So `localhost:80` on the laptop **is** the backend container — Docker forwards
 the connection. The hardcoded `http://localhost/goals` happens to work because
 the backend is published to the exact same host and port.
 
-### Why it breaks everywhere else
+**Why it breaks everywhere else**
 
 | Environment | `http://localhost/goals` goes to | Result |
 |---|---|---|
@@ -111,7 +323,7 @@ the backend is published to the exact same host and port.
 The app is not portable. It only works in the one environment where Docker
 happens to publish port 80 to the host.
 
-### The correct solution — relative URL + nginx proxy
+**The correct solution — relative URL + nginx proxy**
 
 Change `App.js` to use a **relative URL** — no hostname, no port:
 
@@ -158,8 +370,6 @@ MongoDB
 One change, one image — works in Docker Compose, Kubernetes, and every cloud.
 
 ---
-
-## Concepts
 
 ### Multi-Stage Docker Builds
 
@@ -250,32 +460,8 @@ best practice. New environments set the vars; existing environments work without
 
 ---
 
-## Project Structure
 
-```
-14-goals-app-production/
-├── README.md                       ← this file
-├── docker-compose.yaml             ← updated for production images
-├── env/
-|   ├── mongodb.env                 ← NEW: serves mongodb vars  
-│   └── backend.env                 ← updated with new vars
-└── src/
-    ├── backend/
-    │   ├── app.js                  ← CHANGED: configurable MongoDB connection
-    │   ├── Dockerfile              ← REPLACED: production build
-    │   ├── models/
-    │   │   └── goal.js             ← unchanged
-    │   └── package.json            ← NEW: serves for 'npm ci'
-    └── frontend/
-        ├── Dockerfile              ← REPLACED: multi-stage build with nginx
-        ├── nginx.conf              ← NEW: serves React + proxies /goals
-    │   ├── package.json            ← unchanged        
-        └── src/
-            ├── App.js              ← CHANGED: relative URL fetch('/goals')
-            └── components/         ← unchanged
-```
-
-### Setup — Copy Source from Demo-13
+### Project Setup — Copy Source from Demo-13
 
 ```bash
 # Create Demo-14 directory
@@ -310,6 +496,33 @@ src/
     └── src/
         ├── App.js
         └── components/
+```
+
+**End Project Structure**
+
+After copying source files from Demo-13 and updates made in this demo, the project structure would look something like below. Also note , below view this does not include all the files, only highlights highlevel folder structure and changes
+
+```
+14-goals-app-production/
+├── README.md                       ← this file
+├── docker-compose.yaml             ← updated for production images
+├── env/
+|   ├── mongodb.env                 ← NEW: serves mongodb vars  
+│   └── backend.env                 ← updated with new vars
+└── src/
+    ├── backend/
+    │   ├── app.js                  ← CHANGED: configurable MongoDB connection
+    │   ├── Dockerfile              ← REPLACED: production build
+    │   ├── models/
+    │   │   └── goal.js             ← unchanged
+    │   └── package.json            ← NEW: serves for 'npm ci'
+    └── frontend/
+        ├── Dockerfile              ← REPLACED: multi-stage build with nginx
+        ├── nginx.conf              ← NEW: serves React + proxies /goals
+    │   ├── package.json            ← unchanged        
+        └── src/
+            ├── App.js              ← CHANGED: relative URL fetch('/goals')
+            └── components/         ← unchanged
 ```
 
 ---
@@ -385,9 +598,10 @@ server {
     # Proxy all /goals API requests to the backend
     # ${BACKEND_HOST} is replaced at container start by envsubst
     location /goals {
-        resolver        127.0.0.11 valid=10s;
-        set $backend    http://${BACKEND_HOST}:80;
-        proxy_pass      $backend;
+#        resolver        127.0.0.11 valid=10s;
+#        set $backend    http://${BACKEND_HOST}:80;
+#        proxy_pass      $backend;
+        proxy_pass      http://${BACKEND_HOST}:80;
 
         proxy_set_header Host              $host;
         proxy_set_header X-Real-IP         $remote_addr;
@@ -469,105 +683,47 @@ The React app calls `/goals` as a relative URL — the browser expands it to
 here and forwards it to the backend service.
 
 ---
+**`proxy_pass http://${BACKEND_HOST}:80`**
 
-**`resolver 127.0.0.11 valid=10s`**
+Forwards the incoming request to the backend. nginx acts as a transparent proxy
+— the browser never communicates with the backend directly.
 
-This is required when `proxy_pass` uses a variable (explained in the next
-directive). It tells nginx which DNS server to use when resolving hostnames.
+**Why `${BACKEND_HOST}` and not a hardcoded name like `http://backend:80`?**
 
-`127.0.0.11` is Docker's internal DNS resolver — the address Docker assigns
-to its embedded DNS server in every container network. This is how container
-names (`backend`, `goals-backend-svc`) resolve to IP addresses inside Docker
-and Kubernetes.
-
-`valid=10s` — re-resolve the hostname every 10 seconds. Without this, nginx
-resolves the hostname once at startup and caches it forever. If the backend
-container restarts and gets a new IP address, nginx keeps sending traffic to
-the old IP until it is restarted too. With `valid=10s`, nginx checks DNS every
-10 seconds and picks up the new IP automatically.
-
-> **Without `resolver`, nginx refuses to start** when `proxy_pass` uses a
-> variable. The error is:
-> `nginx: [emerg] no resolver defined to resolve <hostname>`
-> The `resolver` directive is mandatory whenever you use a variable in `proxy_pass`.
-
----
-
-**`set $backend http://${BACKEND_HOST}:80`**
-
-This is the most important line — and the reason it is written this way instead
-of `proxy_pass http://backend:80` directly needs a full explanation.
-
-**Why not write `proxy_pass http://backend:80` directly?**
-
-If you write the hostname inline:
-```nginx
-location /goals {
-    proxy_pass http://backend:80;    # hostname inline
-}
-```
-
-nginx resolves `backend` **once at startup** and caches the result permanently.
-This creates two problems:
-
-**Problem 1 — The container might not exist at startup.**
-During `docker compose up`, containers start in sequence. If nginx starts before
-the backend container is created, DNS resolution of `backend` fails and nginx
-refuses to start entirely — even though the backend will be available seconds later.
-
-**Problem 2 — Stale IP after restart.**
-If the backend container restarts (crash, update, scale), it gets a new IP
-address. nginx is still sending traffic to the old IP. All proxied requests fail
-until nginx itself is restarted.
-
-**The variable pattern solves both problems:**
-```nginx
-resolver        127.0.0.11 valid=10s;   # use Docker DNS, re-resolve every 10s
-set $backend    http://${BACKEND_HOST}:80;
-proxy_pass      $backend;
-```
-
-When `proxy_pass` receives a variable, nginx defers DNS resolution to
-**request time** — every incoming request triggers a DNS lookup (cached for
-`valid=10s`). This means:
-
-- nginx starts successfully even if the backend does not exist yet ✅
-- When the backend restarts, the next request after 10 seconds picks up the
-  new IP ✅
-- The hostname itself is configurable — `${BACKEND_HOST}` is substituted at
-  container start by `envsubst`, making the same image work with any backend
-  hostname ✅
-
-**Why `${BACKEND_HOST}` and not a fixed name?**
-
-`${BACKEND_HOST}` is an environment variable placeholder processed by `envsubst`
-when the nginx container starts. The nginx official Docker image automatically
-runs `envsubst` on any file in `/etc/nginx/templates/`, replacing `${VAR}`
-with the value of the environment variable named `VAR`.
-
+`${BACKEND_HOST}` is an environment variable placeholder. The nginx Docker image
+automatically runs `envsubst` on files in `/etc/nginx/templates/` at container
+start, replacing `${BACKEND_HOST}` with its actual value before nginx reads the
+config. By the time nginx starts, the config contains a literal hostname:
 ```
 Container starts with: BACKEND_HOST=backend
-envsubst processes:    set $backend http://${BACKEND_HOST}:80;
-Result written to:     set $backend http://backend:80;
+envsubst processes:    proxy_pass http://${BACKEND_HOST}:80;
+Result written to:     proxy_pass http://backend:80;
 nginx reads result and starts
 ```
 
-The same image works in both environments by changing only the env var:
+This makes the same image work in any environment by changing only the
+environment variable:
 
-| Environment | `BACKEND_HOST` value | `proxy_pass` resolves to |
+| Environment | `BACKEND_HOST` value | nginx `proxy_pass` target |
 |---|---|---|
 | Docker Compose | `backend` | `http://backend:80` (Compose service name) |
 | Kubernetes | `goals-backend-svc` | `http://goals-backend-svc:80` (K8s Service name) |
 
 No image rebuild needed between environments.
 
----
+**How nginx resolves the hostname:**
 
-**`proxy_pass $backend`**
+nginx resolves `backend` (or `goals-backend-svc`) using the container's
+`/etc/resolv.conf` — the same DNS resolver every other process in the container
+uses. In Docker Compose this is `127.0.0.11` (Docker's internal DNS). In
+Kubernetes this is CoreDNS. No special configuration needed — the system
+resolver handles it transparently.
 
-Forwards the incoming request to the URL stored in `$backend`. nginx acts as
-a transparent proxy — the backend receives the request as if it came directly
-from the client, with the proxy headers added below.
+nginx resolves the hostname once at startup and caches it. This is correct
+behaviour for both environments:
+- In Docker Compose, service IPs are stable for the container's lifetime
+- In Kubernetes, `proxy_pass` targets the Service ClusterIP which never changes,
+  so startup-time resolution is reliable
 
 ---
 
@@ -1094,8 +1250,7 @@ docker compose exec frontend cat /etc/nginx/conf.d/default.conf | grep -A2 "set 
 
 **Expected — `backend` hostname substituted:**
 ```text
-        set $backend    http://backend:80;
-        proxy_pass      $backend;
+    proxy_pass      http://backend:80;
 ```
 
 **Verify image sizes — confirm multi-stage build worked:**
